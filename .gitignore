@@ -11,6 +11,7 @@ backend/out/
 backend/.idea/
 backend/*.iml
 backend/*.iws
+backend/src/main/resources/static/
 
 # Frontend
 frontend/node_modules/
