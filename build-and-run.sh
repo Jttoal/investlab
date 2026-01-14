@@ -236,7 +236,7 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
     
     # 启动后端（内置前端）
     log_info "启动后端服务..."
-    java -jar $DIST_DIR/investlab-backend.jar > logs/backend.log 2>&1 &
+    java -jar $DIST_DIR/investlab-backend.jar > backend.log 2>&1 &
     BACKEND_PID=$!
     log_success "后端服务已启动 (PID: $BACKEND_PID)"
     
