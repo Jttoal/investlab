@@ -7,6 +7,7 @@
           <li><router-link to="/">仪表盘</router-link></li>
           <li><router-link to="/strategies">策略管理</router-link></li>
           <li><router-link to="/accounts">账户管理</router-link></li>
+          <li><router-link to="/household-bills">家庭账单</router-link></li>
           <li><router-link to="/settings">系统设置</router-link></li>
         </ul>
       </div>

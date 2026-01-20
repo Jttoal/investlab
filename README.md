@@ -126,10 +126,27 @@ build-and-run.bat
 
 #### 后端启动
 
+**普通模式:**
 ```bash
 cd backend
 ./gradlew bootRun
 ```
+
+**调试模式(推荐用于开发):**
+```bash
+# 方式1: 使用提供的脚本
+./test-backend-start.sh
+
+# 方式2: 直接使用 Gradle
+./gradlew :backend:bootRun --debug-jvm
+# 然后在 VS Code 中使用 F5 选择 "Attach to InvestLab (远程调试)"
+```
+
+**VS Code 调试:**
+- 按 F5,选择 "InvestLab (Gradle bootRun - 推荐)"
+- 或者选择 "InvestLab (Spring Boot - 直接启动)"
+
+详细调试说明请查看 [DEBUG_GUIDE.md](./DEBUG_GUIDE.md)
 
 后端服务将在 `http://localhost:8080` 启动
 
@@ -142,6 +159,16 @@ npm run dev
 ```
 
 前端应用将在 `http://localhost:5173` 启动
+
+**重要**: 前端已配置 Vite 代理,会自动将 `/api` 请求转发到后端 `http://localhost:8080`。详细说明请查看 [frontend/PROXY_CONFIG.md](./frontend/PROXY_CONFIG.md)
+
+#### 验证连接
+
+```bash
+./test-proxy.sh
+```
+
+这个脚本会自动检查前后端服务是否正常运行,以及代理配置是否正确。
 
 ## API 文档
 

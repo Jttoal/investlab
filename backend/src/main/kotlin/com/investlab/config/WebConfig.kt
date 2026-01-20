@@ -11,6 +11,7 @@ class WebConfig : WebMvcConfigurer {
         registry.addMapping("/api/**")
             .allowedOrigins(
                 "http://localhost:5173",
+                "http://localhost:5174",  // Vite 备用端口
                 "http://localhost:3000",
                 "http://localhost:8081"
             )

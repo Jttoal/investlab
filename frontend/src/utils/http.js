@@ -1,7 +1,9 @@
 import axios from 'axios'
 
+// 开发模式下使用相对路径,通过 Vite 代理转发
+// 生产模式下使用环境变量或默认值
 const http = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080',
+  baseURL: import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? '' : 'http://localhost:8080'),
   timeout: 10000,
   headers: {
     'Content-Type': 'application/json'
