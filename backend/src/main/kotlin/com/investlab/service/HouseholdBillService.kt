@@ -214,91 +214,70 @@ class HouseholdBillService(
     private fun parsePdf(path: Path): ParseResult {
         val rows = mutableListOf<ParsedRow>()
         var accountName: String? = null
-        val accountPattern = Regex("户\\s*名[：:]+\\s*([^\\s]+)")
+        // 匹配 "户  名：xxx"，其中空格可能是普通空格或不间断空格(nbsp, \u00A0)
+        val accountPattern = Regex("户[\\s\u00A0]+名[\\s\u00A0]*[：:][\\s\u00A0]*([^\\s\u00A0\\n]+)")
+
         Loader.loadPDF(path.toFile()).use { document ->
             val stripper = PDFTextStripper()
             for (page in 1..document.numberOfPages) {
                 stripper.startPage = page
                 stripper.endPage = page
                 val text = stripper.getText(document) ?: continue
+
+                // 第一页提取户名
                 if (page == 1 && accountName.isNullOrBlank()) {
                     val match = accountPattern.find(text)
                     accountName = match?.groupValues?.getOrNull(1)
                 }
+
                 val lines = text.split("\n")
-                var pendingLine = ""
                 var i = 0
                 while (i < lines.size) {
                     val line = lines[i].trim()
-                    if (line.isBlank()) {
+
+                    // 跳过空行、表头、页脚
+                    if (line.isBlank() || isHeaderLine(line) || isEnglishHeaderLine(line) || isPageFooter(line)) {
                         i++
                         continue
                     }
 
-                    if (isHeaderLine(line) || isEnglishHeaderLine(line) || isPageFooter(line)) {
-                        pendingLine = ""
-                        i++
-                        continue
-                    }
-
+                    // 检查是否是数据行
                     if (isDataLine(line)) {
                         val parsed = parseDataLine(line)
                         if (parsed != null) {
-                            // 只有当对手信息列为空时，才拼接前后行
-                            if (parsed.counterparty.isBlank()) {
-                                var counterparty = ""
-                                // 将前一行的内容添加到对手信息
-                                if (pendingLine.isNotBlank()) {
-                                    counterparty = pendingLine
-                                }
-                                
-                                // 检查下一行是否是非数据行（对手信息续行）
-                                val hasNext = (i + 1) < lines.size
-                                if (hasNext) {
-                                    val nextLine = lines[i + 1].trim()
-                                    if (nextLine.isNotBlank()) {
-                                        // 先检查是否是数据行（最常见）
-                                        val nextIsData = isDataLine(nextLine)
-                                        if (!nextIsData) {
-                                            // 只有不是数据行时才继续检查其他类型
-                                            val nextIsSpecial = isHeaderLine(nextLine) || isEnglishHeaderLine(nextLine) || isPageFooter(nextLine)
-                                            if (!nextIsSpecial) {
-                                                // 这是对手信息续行
-                                                counterparty = if (counterparty.isNotBlank()) {
-                                                    "$counterparty $nextLine"
-                                                } else {
-                                                    nextLine
-                                                }
-                                                i += 2  // 跳过当前行和下一行
-                                            } else {
-                                                i += 1
-                                            }
-                                        } else {
-                                            i += 1
-                                        }
-                                    } else {
-                                        i += 1
-                                    }
+                            var counterparty = parsed.counterparty
+
+                            // 如果对手信息为空，尝试从后续2行拼接
+                            if (counterparty.isBlank() && i + 2 < lines.size) {
+                                val next1 = lines[i + 1].trim()
+                                val next2 = lines[i + 2].trim()
+
+                                // 检查后续2行是否都不是数据行、表头、页脚
+                                val next1IsValid = next1.isNotBlank() && !isDataLine(next1) &&
+                                                   !isHeaderLine(next1) && !isEnglishHeaderLine(next1) && !isPageFooter(next1)
+                                val next2IsValid = next2.isNotBlank() && !isDataLine(next2) &&
+                                                   !isHeaderLine(next2) && !isEnglishHeaderLine(next2) && !isPageFooter(next2)
+
+                                if (next1IsValid && next2IsValid) {
+                                    // 拼接2行作为对手信息
+                                    counterparty = "$next1$next2"
+                                    i += 3  // 跳过当前行和后续2行
+                                } else if (next1IsValid) {
+                                    // 只有第1行有效
+                                    counterparty = next1
+                                    i += 2
                                 } else {
                                     i += 1
                                 }
-                                rows.add(parsed.copy(counterparty = counterparty))
                             } else {
-                                // 对手信息列不为空，说明没有自动换行，不需要拼接
-                                rows.add(parsed)
                                 i += 1
                             }
-                            pendingLine = ""
+
+                            rows.add(parsed.copy(counterparty = counterparty))
                         } else {
-                            // 解析失败，跳过这行
                             i += 1
                         }
                     } else {
-                        // 非数据行，只有在不是表头关键词的情况下才保存为待处理行
-                        // 避免将表头行的部分内容误当作对手信息
-                        val containsHeaderKeywords = headerKeywords.any { line.contains(it) } || 
-                                                     englishHeaderKeywords.any { line.contains(it) }
-                        pendingLine = if (line.isNotBlank() && !containsHeaderKeywords) line else ""
                         i++
                     }
                 }
