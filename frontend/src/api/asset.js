@@ -38,3 +38,11 @@ export function getAssetKlineBundle(id, { period = 'day', start, end } = {}) {
   if (end) params.end = end
   return http.get(`/api/v1/assets/${id}/kline/bundle`, { params })
 }
+
+export function getAssetConfig(id) {
+  return http.get(`/api/v1/assets/${id}/config`)
+}
+
+export function updateAssetConfig(id, config) {
+  return http.put(`/api/v1/assets/${id}/config`, config)
+}

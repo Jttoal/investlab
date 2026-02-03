@@ -15,8 +15,11 @@ import java.time.LocalDateTime
 class AssetService(
     private val assetRepository: AssetRepository,
     private val strategyRepository: StrategyRepository,
-    private val snowballClient: SnowballClient
+    private val snowballClient: SnowballClient,
+    private val settingService: SettingService
 ) {
+    
+    private val objectMapper = com.fasterxml.jackson.module.kotlin.jacksonObjectMapper()
     
     fun getAllAssets(): List<AssetResponse> {
         return assetRepository.findAll().map { AssetResponse.from(it) }
@@ -122,15 +125,71 @@ class AssetService(
         trades: List<Trade>,
         viewpoints: List<ViewpointResponse>
     ): AssetKlineResponse {
-        val kline = getKlines(assetId, period, start, end)
+        val asset = assetRepository.findById(assetId)
+            .orElseThrow { ResourceNotFoundException("标的不存在: $assetId") }
+        
+        // 获取均线配置：优先使用标的配置，其次使用策略配置
+        val maConfig = getEffectiveMaConfig(assetId, asset.strategyId)
+        
+        val rawKline = getKlines(assetId, period, start, end)
+        val klineWithIndicators = applyIndicators(rawKline, maConfig)
         val holding = calculateHolding(trades)
+        
         return AssetKlineResponse(
-            kline = kline,
+            kline = klineWithIndicators,
             viewpoints = viewpoints,
             trades = trades.map { TradeResponse.from(it) },
-            holding = holding
+            holding = holding,
+            maConfig = maConfig
         )
     }
+    
+    private fun getEffectiveMaConfig(assetId: Long, strategyId: Long): MaConfig {
+        // 1. 尝试获取标的自定义配置
+        val assetConfigKey = "asset_config_$assetId"
+        val assetConfig = try {
+            settingService.getByKey(assetConfigKey)?.let { setting ->
+                parseConfigJson(setting.value)?.maConfig
+            }
+        } catch (e: Exception) {
+            null
+        }
+        
+        if (assetConfig != null) {
+            return assetConfig
+        }
+        
+        // 2. 尝试获取策略默认配置
+        val strategyConfigKey = "strategy_config_$strategyId"
+        val strategyConfig = try {
+            settingService.getByKey(strategyConfigKey)?.let { setting ->
+                parseConfigJson(setting.value)?.maConfig
+            }
+        } catch (e: Exception) {
+            null
+        }
+        
+        if (strategyConfig != null) {
+            return strategyConfig
+        }
+        
+        // 3. 使用默认配置
+        return MaConfig()
+    }
+    
+    private fun parseConfigJson(json: String): StrategyConfigData? {
+        return try {
+            val mapper = com.fasterxml.jackson.module.kotlin.jacksonObjectMapper()
+            mapper.readValue(json, StrategyConfigData::class.java)
+        } catch (e: Exception) {
+            null
+        }
+    }
+    
+    private data class StrategyConfigData(
+        val maConfig: MaConfig? = null,
+        val showBoll: Boolean? = null
+    )
 
     private fun calculateHolding(trades: List<Trade>): HoldingSummary? {
         if (trades.isEmpty()) return null
@@ -216,10 +275,10 @@ class AssetService(
                 )
             )
         }
-        return applyIndicators(points)
+        return points
     }
 
-    private fun applyIndicators(list: List<KlinePoint>): List<KlinePoint> {
+    private fun applyIndicators(list: List<KlinePoint>, maConfig: MaConfig): List<KlinePoint> {
         val closes = list.map { it.close }
         val ma = fun(window: Int, idx: Int): BigDecimal? {
             if (idx + 1 < window) return null
@@ -243,10 +302,10 @@ class AssetService(
                 variance.sqrt()
             }
             p.copy(
-                ma51 = ma(51, idx),
-                ma120 = ma(120, idx),
-                ma250 = ma(250, idx),
-                ma850 = ma(850, idx),
+                ma1 = ma(maConfig.ma1, idx),
+                ma2 = ma(maConfig.ma2, idx),
+                ma3 = ma(maConfig.ma3, idx),
+                ma4 = ma(maConfig.ma4, idx),
                 bollMid = ma20,
                 bollUpper = if (ma20 != null && std != null) ma20 + k * std else null,
                 bollLower = if (ma20 != null && std != null) ma20 - k * std else null
@@ -260,5 +319,58 @@ class AssetService(
             g = (g + this.divide(g, 10, RoundingMode.HALF_UP)).divide(BigDecimal("2"), 10, RoundingMode.HALF_UP)
         }
         return g
+    }
+    
+    fun getAssetConfig(id: Long): Map<String, Any> {
+        // 验证标的存在
+        if (!assetRepository.existsById(id)) {
+            throw ResourceNotFoundException("标的不存在: $id")
+        }
+        
+        val configKey = "asset_config_$id"
+        val setting = settingService.getByKey(configKey)
+        
+        return if (setting != null) {
+            objectMapper.readValue(setting.value, Map::class.java) as Map<String, Any>
+        } else {
+            // 返回空配置，表示使用策略默认配置
+            emptyMap()
+        }
+    }
+    
+    @Transactional
+    fun updateAssetConfig(id: Long, config: Map<String, Any>): Map<String, Any> {
+        // 验证标的存在
+        if (!assetRepository.existsById(id)) {
+            throw ResourceNotFoundException("标的不存在: $id")
+        }
+        
+        val configKey = "asset_config_$id"
+        val configJson = objectMapper.writeValueAsString(config)
+        
+        val existingSetting = settingService.getByKey(configKey)
+        
+        if (existingSetting != null) {
+            settingService.update(
+                existingSetting.id,
+                SettingRequest(
+                    key = configKey,
+                    value = configJson,
+                    valueType = SettingValueType.json,
+                    description = "标的 #$id 的配置"
+                )
+            )
+        } else {
+            settingService.create(
+                SettingRequest(
+                    key = configKey,
+                    value = configJson,
+                    valueType = SettingValueType.json,
+                    description = "标的 #$id 的配置"
+                )
+            )
+        }
+        
+        return config
     }
 }

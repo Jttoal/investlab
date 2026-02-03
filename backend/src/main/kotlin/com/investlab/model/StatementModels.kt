@@ -100,6 +100,9 @@ data class StatementTransaction(
     @Column(name = "txn_type_raw", columnDefinition = "TEXT")
     var txnTypeRaw: String? = null,
 
+    @Column(name = "txn_type_raw_original", columnDefinition = "TEXT")
+    var txnTypeRawOriginal: String? = null,
+
     @Column(name = "counterparty", columnDefinition = "TEXT")
     var counterparty: String? = null,
 
@@ -165,6 +168,7 @@ data class StatementTransactionResponse(
     val amount: BigDecimal,
     val balance: BigDecimal?,
     val txnTypeRaw: String?,
+    val txnTypeRawOriginal: String?,
     val counterparty: String?,
     val accountName: String?,
     val category: TransactionCategory,
@@ -182,6 +186,7 @@ data class StatementTransactionResponse(
                 amount = entity.amount,
                 balance = entity.balance,
                 txnTypeRaw = entity.txnTypeRaw,
+                txnTypeRawOriginal = entity.txnTypeRawOriginal,
                 counterparty = entity.counterparty,
                 accountName = entity.accountName,
                 category = entity.category,
@@ -197,4 +202,79 @@ data class StatementSummaryResponse(
     val category: TransactionCategory,
     val direction: TransactionDirection,
     val totalAmount: BigDecimal
+)
+
+// 统计API响应类
+data class SummaryItemResponse(
+    val summary: String,
+    val amount: BigDecimal
+)
+
+data class MonthlySummaryResponse(
+    val month: String,
+    val category: String,
+    val overview: OverviewResponse,
+    val expenseDetails: List<SummaryItemResponse>,
+    val incomeDetails: List<SummaryItemResponse>
+)
+
+data class OverviewResponse(
+    val totalIncome: BigDecimal,
+    val totalExpense: BigDecimal,
+    val balance: BigDecimal
+)
+
+data class TrendDataPoint(
+    val period: String,  // YYYY-MM 或 YYYY
+    val income: BigDecimal,
+    val expense: BigDecimal,
+    val balance: BigDecimal
+)
+
+data class TrendResponse(
+    val category: String,
+    val data: List<TrendDataPoint>
+)
+
+data class UpdateTransactionSummaryRequest(
+    val txnTypeRaw: String
+)
+
+// 导入规则相关
+data class ReplaceRule(
+    val pattern: String,
+    val replacement: String,
+    val matchType: String = "summary", // summary: 匹配交易摘要, counterparty: 匹配对手信息, both: 同时匹配
+    val counterpartyPattern: String? = null // 当matchType为both时，用于匹配对手信息的关键字
+)
+
+data class ImportRulesRequest(
+    val summaryKeywords: List<String>,
+    val counterpartyKeywords: List<String>,
+    val replaceRules: List<ReplaceRule>
+)
+
+data class ImportRulesResponse(
+    val summaryKeywords: List<String>,
+    val counterpartyKeywords: List<String>,
+    val replaceRules: List<ReplaceRule>
+)
+
+data class RerunChangeResponse(
+    val id: Long,
+    val txnDate: String,
+    val amount: String,
+    val counterparty: String?,
+    val originalSummary: String,
+    val currentSummary: String,
+    val categoryChange: Boolean,
+    val oldCategory: String?,
+    val newCategory: String?,
+    val summaryChange: Boolean,
+    val oldSummary: String?,
+    val newSummary: String?
+)
+
+data class ExecuteRerunRequest(
+    val changeIds: List<Long>
 )

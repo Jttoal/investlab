@@ -10,10 +10,10 @@ data class KlinePoint(
     val low: BigDecimal,
     val close: BigDecimal,
     val volume: BigDecimal,
-    val ma51: BigDecimal? = null,
-    val ma120: BigDecimal? = null,
-    val ma250: BigDecimal? = null,
-    val ma850: BigDecimal? = null,
+    val ma1: BigDecimal? = null,
+    val ma2: BigDecimal? = null,
+    val ma3: BigDecimal? = null,
+    val ma4: BigDecimal? = null,
     val bollUpper: BigDecimal? = null,
     val bollMid: BigDecimal? = null,
     val bollLower: BigDecimal? = null
@@ -39,7 +39,15 @@ data class AssetKlineResponse(
     val kline: List<KlinePoint>,
     val viewpoints: List<ViewpointResponse>,
     val trades: List<TradeResponse>,
-    val holding: HoldingSummary?
+    val holding: HoldingSummary?,
+    val maConfig: MaConfig? = null
+)
+
+data class MaConfig(
+    val ma1: Int = 51,
+    val ma2: Int = 120,
+    val ma3: Int = 250,
+    val ma4: Int = 850
 )
 
 data class SettingRequest(

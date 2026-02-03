@@ -26,14 +26,17 @@
       </div>
       <div class="control-group indicators">
         <span>均线</span>
-        <label><input type="checkbox" v-model="showMa51" @change="renderChart"> MA51</label>
-        <label><input type="checkbox" v-model="showMa120" @change="renderChart"> MA120</label>
-        <label><input type="checkbox" v-model="showMa250" @change="renderChart"> MA250</label>
-        <label><input type="checkbox" v-model="showMa850" @change="renderChart"> MA850</label>
+        <label><input type="checkbox" v-model="showMa1" @change="renderChart"> MA{{ effectiveMaConfig.ma1 }}</label>
+        <label><input type="checkbox" v-model="showMa2" @change="renderChart"> MA{{ effectiveMaConfig.ma2 }}</label>
+        <label><input type="checkbox" v-model="showMa3" @change="renderChart"> MA{{ effectiveMaConfig.ma3 }}</label>
+        <label><input type="checkbox" v-model="showMa4" @change="renderChart"> MA{{ effectiveMaConfig.ma4 }}</label>
       </div>
       <div class="control-group indicators">
         <span>布林线</span>
         <label><input type="checkbox" v-model="showBoll" @change="renderChart"> 显示布林</label>
+      </div>
+      <div class="control-group">
+        <button class="btn btn--secondary btn--sm" @click="showConfigModal = true">配置均线</button>
       </div>
     </div>
 
@@ -112,14 +115,72 @@
         </div>
       </div>
     </div>
+    
+    <!-- 均线配置模态框 -->
+    <div v-if="showConfigModal" class="modal-overlay" @click.self="closeConfigModal">
+      <div class="modal">
+        <div class="modal__header">
+          <h2 class="modal__title">自定义均线配置</h2>
+          <button class="modal__close" @click="closeConfigModal">&times;</button>
+        </div>
+        <div class="modal__body">
+          <p class="config-note">
+            当前使用: {{ currentConfigSource }}
+          </p>
+          <div class="form-row">
+            <label class="form-label">均线1 (天数)</label>
+            <input 
+              type="number" 
+              v-model.number="assetConfig.maConfig.ma1" 
+              class="form-input"
+              min="1"
+            />
+          </div>
+          <div class="form-row">
+            <label class="form-label">均线2 (天数)</label>
+            <input 
+              type="number" 
+              v-model.number="assetConfig.maConfig.ma2" 
+              class="form-input"
+              min="1"
+            />
+          </div>
+          <div class="form-row">
+            <label class="form-label">均线3 (天数)</label>
+            <input 
+              type="number" 
+              v-model.number="assetConfig.maConfig.ma3" 
+              class="form-input"
+              min="1"
+            />
+          </div>
+          <div class="form-row">
+            <label class="form-label">均线4 (天数)</label>
+            <input 
+              type="number" 
+              v-model.number="assetConfig.maConfig.ma4" 
+              class="form-input"
+              min="1"
+            />
+          </div>
+          <div class="form-actions">
+            <button class="btn btn--secondary" @click="clearAssetConfig">使用策略默认</button>
+            <button class="btn btn--primary" @click="saveAssetConfig" :disabled="savingConfig">
+              {{ savingConfig ? '保存中...' : '保存' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
   <div v-else class="loading">加载中...</div>
 </template>
 
 <script setup>
-import { ref, onMounted, watch } from 'vue'
+import { ref, onMounted, watch, computed } from 'vue'
 import * as echarts from 'echarts'
-import { getAssetDetail, getAssetKlineBundle } from '../api/asset'
+import { getAssetDetail, getAssetKlineBundle, getAssetConfig, updateAssetConfig } from '../api/asset'
+import { getStrategyConfig } from '../api/strategy'
 import { useRoute } from 'vue-router'
 
 const route = useRoute()
@@ -133,10 +194,46 @@ const start = ref(new Date(new Date().setFullYear(new Date().getFullYear() - 2))
 const end = ref(new Date().toISOString().slice(0, 10))
 
 const showBoll = ref(true)
-const showMa51 = ref(true)
-const showMa120 = ref(true)
-const showMa250 = ref(true)
-const showMa850 = ref(false)
+const showMa1 = ref(true)
+const showMa2 = ref(true)
+const showMa3 = ref(true)
+const showMa4 = ref(false)
+
+// 均线配置相关
+const strategyConfig = ref(null)
+const assetConfig = ref({
+  maConfig: {
+    ma1: 51,
+    ma2: 120,
+    ma3: 250,
+    ma4: 850
+  }
+})
+const hasAssetConfig = ref(false)
+const showConfigModal = ref(false)
+const savingConfig = ref(false)
+
+// 计算有效配置：标的配置 > 策略配置 > 后端返回的配置
+const effectiveMaConfig = computed(() => {
+  if (bundle.value?.maConfig) {
+    return bundle.value.maConfig
+  }
+  return {
+    ma1: 51,
+    ma2: 120,
+    ma3: 250,
+    ma4: 850
+  }
+})
+
+const currentConfigSource = computed(() => {
+  if (hasAssetConfig.value) {
+    return '标的自定义配置'
+  } else if (strategyConfig.value?.maConfig) {
+    return '策略默认配置'
+  }
+  return '系统默认配置'
+})
 
 
 const chartRef = ref(null)
@@ -149,13 +246,43 @@ const activeTrade = ref(null)
 
 onMounted(async () => {
   await loadDetail()
+  await loadConfigs()
   await loadBundle()
 })
 
-watch([showBoll, showMa51, showMa120, showMa250, showMa850], renderChart)
+watch([showBoll, showMa1, showMa2, showMa3, showMa4], renderChart)
 
 async function loadDetail() {
   assetDetail.value = await getAssetDetail(assetId)
+}
+
+async function loadConfigs() {
+  try {
+    // 加载策略配置
+    if (assetDetail.value?.asset?.strategyId) {
+      strategyConfig.value = await getStrategyConfig(assetDetail.value.asset.strategyId)
+    }
+    
+    // 加载标的配置
+    const config = await getAssetConfig(assetId)
+    if (config.maConfig) {
+      assetConfig.value = config
+      hasAssetConfig.value = true
+    } else {
+      // 如果没有标的配置，使用策略配置或默认配置
+      assetConfig.value = {
+        maConfig: strategyConfig.value?.maConfig || {
+          ma1: 51,
+          ma2: 120,
+          ma3: 250,
+          ma4: 850
+        }
+      }
+      hasAssetConfig.value = false
+    }
+  } catch (error) {
+    console.error('加载配置失败:', error)
+  }
 }
 
 async function loadBundle() {
@@ -170,15 +297,6 @@ async function loadBundle() {
 }
 
 function renderChart() {
-  dbg('H1', 'AssetDetail.renderChart', 'enter', {
-    showBoll: showBoll.value,
-    showMa51: showMa51.value,
-    showMa120: showMa120.value,
-    showMa250: showMa250.value,
-    showMa850: showMa850.value,
-    hasBundle: !!bundle.value,
-    klineSize: bundle.value?.kline?.length || 0
-  })
   if (!chartRef.value || !bundle.value?.kline?.length) return
   if (!chart) {
     chart = echarts.init(chartRef.value)
@@ -199,10 +317,10 @@ function renderChart() {
       smooth: true
     })
   }
-  addLine('MA51', 'ma51', showMa51.value)
-  addLine('MA120', 'ma120', showMa120.value)
-  addLine('MA250', 'ma250', showMa250.value)
-  addLine('MA850', 'ma850', showMa850.value)
+  addLine(`MA${effectiveMaConfig.value.ma1}`, 'ma1', showMa1.value)
+  addLine(`MA${effectiveMaConfig.value.ma2}`, 'ma2', showMa2.value)
+  addLine(`MA${effectiveMaConfig.value.ma3}`, 'ma3', showMa3.value)
+  addLine(`MA${effectiveMaConfig.value.ma4}`, 'ma4', showMa4.value)
 
   if (showBoll.value) {
     series.push({
@@ -314,6 +432,54 @@ function closeTradeDialog() {
   activeTrade.value = null
 }
 
+function closeConfigModal() {
+  showConfigModal.value = false
+}
+
+async function saveAssetConfig() {
+  try {
+    savingConfig.value = true
+    await updateAssetConfig(assetId, assetConfig.value)
+    hasAssetConfig.value = true
+    alert('配置保存成功')
+    closeConfigModal()
+    await loadBundle() // 重新加载数据以应用新配置
+  } catch (error) {
+    console.error('保存标的配置失败:', error)
+    alert('配置保存失败: ' + (error.message || '未知错误'))
+  } finally {
+    savingConfig.value = false
+  }
+}
+
+async function clearAssetConfig() {
+  if (!confirm('确定清除标的自定义配置，使用策略默认配置？')) {
+    return
+  }
+  try {
+    savingConfig.value = true
+    await updateAssetConfig(assetId, {})
+    hasAssetConfig.value = false
+    // 恢复为策略配置或默认配置
+    assetConfig.value = {
+      maConfig: strategyConfig.value?.maConfig || {
+        ma1: 51,
+        ma2: 120,
+        ma3: 250,
+        ma4: 850
+      }
+    }
+    alert('已清除标的自定义配置')
+    closeConfigModal()
+    await loadBundle() // 重新加载数据以应用新配置
+  } catch (error) {
+    console.error('清除标的配置失败:', error)
+    alert('操作失败: ' + (error.message || '未知错误'))
+  } finally {
+    savingConfig.value = false
+  }
+}
+
 function formatMoney(value) {
   if (value === null || value === undefined) return '-'
   return new Intl.NumberFormat('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value)
@@ -412,5 +578,42 @@ function getTradeTypeLabel(type) {
 .profit-negative { color: #dc3545; }
 .modal .vp-detail {
   line-height: 1.5;
+}
+.config-note {
+  padding: 0.75rem;
+  background: #f8f9fa;
+  border-left: 3px solid #42b983;
+  margin-bottom: 1rem;
+  color: #6c757d;
+}
+.form-row {
+  margin-bottom: 1rem;
+}
+.form-label {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-weight: 500;
+  color: #2c3e50;
+}
+.form-input {
+  width: 100%;
+  padding: 0.5rem;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 1rem;
+}
+.form-input:focus {
+  outline: none;
+  border-color: #42b983;
+}
+.form-actions {
+  display: flex;
+  gap: 1rem;
+  justify-content: flex-end;
+  margin-top: 1.5rem;
+}
+.btn--sm {
+  padding: 0.375rem 0.75rem;
+  font-size: 0.875rem;
 }
 </style>

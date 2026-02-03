@@ -42,17 +42,17 @@ dependencies {
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin")
     implementation("org.jetbrains.kotlin:kotlin-reflect")
     implementation("org.apache.pdfbox:pdfbox:3.0.3")
-    
+
     // SQLite
     implementation("org.xerial:sqlite-jdbc:3.47.1.0")
     implementation("org.hibernate.orm:hibernate-community-dialects:6.4.4.Final")
-    
+
     // Flyway
     implementation("org.flywaydb:flyway-core:10.21.0")
 
     // HTTP client
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    
+
     // Test
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
@@ -68,7 +68,7 @@ tasks.named<org.springframework.boot.gradle.tasks.run.BootRun>("bootRun") {
 }
 
 node {
-    version = "20.19.0"
+    version = "25.3.0"
     download = true
     nodeProjectDir = file("${rootProject.projectDir}/frontend")
     // #region agent log

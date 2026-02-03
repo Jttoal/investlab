@@ -1,6 +1,8 @@
 package com.investlab.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.investlab.exception.ForbiddenException
+import com.investlab.exception.ResourceNotFoundException
 import com.investlab.model.*
 import com.investlab.repository.StatementFileRepository
 import com.investlab.repository.StatementTransactionRepository
@@ -105,6 +107,7 @@ class HouseholdBillService(
             val parseResult = parsePdf(storedPath)
             val parsedRows = parseResult.rows
             val keywords = loadKeywords()
+            val rules = getRules(userId)
             val seqCounter = mutableMapOf<String, Int>()
             var dedupCount = 0
             val toInsert = mutableListOf<StatementTransaction>()
@@ -120,6 +123,27 @@ class HouseholdBillService(
                     return@forEach
                 }
 
+                // 应用替换规则 - 匹配到第一条规则后停止
+                var processedSummary = row.txnType
+                for (rule in rules.replaceRules) {
+                    val shouldReplace = when (rule.matchType) {
+                        "counterparty" -> row.counterparty.contains(rule.pattern, ignoreCase = true)
+                        "both" -> {
+                            // 同时匹配：交易摘要包含pattern，且对手信息包含counterpartyPattern
+                            val summaryMatch = row.txnType.contains(rule.pattern, ignoreCase = true)
+                            val counterpartyMatch = rule.counterpartyPattern?.let {
+                                row.counterparty.contains(it, ignoreCase = true)
+                            } ?: false
+                            summaryMatch && counterpartyMatch
+                        }
+                        else -> row.txnType.contains(rule.pattern, ignoreCase = true)
+                    }
+                    if (shouldReplace) {
+                        processedSummary = rule.replacement
+                        break // 匹配到第一条规则后立即退出
+                    }
+                }
+
                 val (category, direction) = classify(row, keywords)
                 toInsert.add(
                     StatementTransaction(
@@ -129,7 +153,8 @@ class HouseholdBillService(
                         currency = row.currency,
                         amount = row.amount,
                         balance = row.balance,
-                        txnTypeRaw = row.txnType,
+                        txnTypeRaw = processedSummary,
+                        txnTypeRawOriginal = row.txnType,  // 保存原始交易摘要
                         counterparty = row.counterparty,
                         accountName = parseResult.accountName,
                         category = category,
@@ -174,9 +199,11 @@ class HouseholdBillService(
         category: TransactionCategory?,
         direction: TransactionDirection?,
         keyword: String?,
-        accountName: String?
+        accountName: String?,
+        counterparty: String?,
+        amountDirection: String?
     ): List<StatementTransactionResponse> {
-        return statementTransactionRepository.search(startDate, endDate, category, direction, keyword, accountName)
+        return statementTransactionRepository.search(startDate, endDate, category, direction, keyword, accountName, counterparty, amountDirection)
             .map { StatementTransactionResponse.from(it) }
     }
 
@@ -383,5 +410,425 @@ class HouseholdBillService(
     private fun md5Hex(bytes: ByteArray): String {
         val digest = MessageDigest.getInstance("MD5").digest(bytes)
         return digest.joinToString("") { "%02x".format(it) }
+    }
+
+    // 新增统计方法
+    fun getMonthlySummary(
+        month: String,  // YYYY-MM
+        category: String,  // ordinary 或 investment
+        accountNames: List<String>?
+    ): MonthlySummaryResponse {
+        val startDate = "$month-01"
+        val endDate = LocalDate.parse(startDate).plusMonths(1).toString()
+
+        val directions = if (category == "ordinary") {
+            listOf("expense", "income")
+        } else {
+            listOf("buy", "redeem")
+        }
+
+        val expenseDirections = if (category == "ordinary") listOf("expense") else listOf("buy")
+        val incomeDirections = if (category == "ordinary") listOf("income") else listOf("redeem")
+
+        // 获取支出明细
+        val expenseDetails = statementTransactionRepository.summarizeByTypeRaw(
+            category, expenseDirections, startDate, endDate, accountNames
+        ).map {
+            val amountValue = when (val amt = it[1]) {
+                is Double -> BigDecimal.valueOf(amt)
+                is Float -> BigDecimal.valueOf(amt.toDouble())
+                is Number -> BigDecimal(amt.toString())
+                else -> BigDecimal(amt.toString())
+            }
+            SummaryItemResponse(
+                summary = it[0] as String,
+                amount = amountValue
+            )
+        }
+
+        // 获取收入明细
+        val incomeDetails = statementTransactionRepository.summarizeByTypeRaw(
+            category, incomeDirections, startDate, endDate, accountNames
+        ).map {
+            val amountValue = when (val amt = it[1]) {
+                is Double -> BigDecimal.valueOf(amt)
+                is Float -> BigDecimal.valueOf(amt.toDouble())
+                is Number -> BigDecimal(amt.toString())
+                else -> BigDecimal(amt.toString())
+            }
+            SummaryItemResponse(
+                summary = it[0] as String,
+                amount = amountValue
+            )
+        }
+
+        // 计算总览
+        val totalExpense = expenseDetails.sumOf { it.amount }
+        val totalIncome = incomeDetails.sumOf { it.amount }
+        val balance = totalIncome - totalExpense
+
+        return MonthlySummaryResponse(
+            month = month,
+            category = category,
+            overview = OverviewResponse(
+                totalIncome = totalIncome,
+                totalExpense = totalExpense,
+                balance = balance
+            ),
+            expenseDetails = expenseDetails,
+            incomeDetails = incomeDetails
+        )
+    }
+
+    fun getYearlySummary(
+        year: String,  // YYYY
+        category: String,
+        accountNames: List<String>?
+    ): MonthlySummaryResponse {
+        val startDate = "$year-01-01"
+        val endDate = "${year.toInt() + 1}-01-01"
+
+        val directions = if (category == "ordinary") {
+            listOf("expense", "income")
+        } else {
+            listOf("buy", "redeem")
+        }
+
+        val expenseDirections = if (category == "ordinary") listOf("expense") else listOf("buy")
+        val incomeDirections = if (category == "ordinary") listOf("income") else listOf("redeem")
+
+        val expenseDetails = statementTransactionRepository.summarizeByTypeRaw(
+            category, expenseDirections, startDate, endDate, accountNames
+        ).map {
+            val amountValue = when (val amt = it[1]) {
+                is Double -> BigDecimal.valueOf(amt)
+                is Float -> BigDecimal.valueOf(amt.toDouble())
+                is Number -> BigDecimal(amt.toString())
+                else -> BigDecimal(amt.toString())
+            }
+            SummaryItemResponse(
+                summary = it[0] as String,
+                amount = amountValue
+            )
+        }
+
+        val incomeDetails = statementTransactionRepository.summarizeByTypeRaw(
+            category, incomeDirections, startDate, endDate, accountNames
+        ).map {
+            val amountValue = when (val amt = it[1]) {
+                is Double -> BigDecimal.valueOf(amt)
+                is Float -> BigDecimal.valueOf(amt.toDouble())
+                is Number -> BigDecimal(amt.toString())
+                else -> BigDecimal(amt.toString())
+            }
+            SummaryItemResponse(
+                summary = it[0] as String,
+                amount = amountValue
+            )
+        }
+
+        val totalExpense = expenseDetails.sumOf { it.amount }
+        val totalIncome = incomeDetails.sumOf { it.amount }
+        val balance = totalIncome - totalExpense
+
+        return MonthlySummaryResponse(
+            month = year,  // 这里用year字段表示年份
+            category = category,
+            overview = OverviewResponse(
+                totalIncome = totalIncome,
+                totalExpense = totalExpense,
+                balance = balance
+            ),
+            expenseDetails = expenseDetails,
+            incomeDetails = incomeDetails
+        )
+    }
+
+    fun getMonthlyTrend(
+        year: String,
+        category: String,
+        accountNames: List<String>?
+    ): TrendResponse {
+        val startDate = "$year-01-01"
+        val endDate = "${year.toInt() + 1}-01-01"
+
+        val incomeDirections = if (category == "ordinary") listOf("income") else listOf("redeem")
+        val expenseDirections = if (category == "ordinary") listOf("expense") else listOf("buy")
+
+        val data = statementTransactionRepository.getTrendData(
+            format = "%Y-%m",
+            category = category,
+            incomeDirections = incomeDirections,
+            expenseDirections = expenseDirections,
+            startDate = startDate,
+            endDate = endDate,
+            accountNames = accountNames
+        ).map {
+            TrendDataPoint(
+                period = it[0] as String,
+                income = BigDecimal(it[1].toString()),
+                expense = BigDecimal(it[2].toString()),
+                balance = BigDecimal(it[3].toString())
+            )
+        }
+
+        return TrendResponse(category = category, data = data)
+    }
+
+    fun getYearlyTrend(
+        category: String,
+        accountNames: List<String>?
+    ): TrendResponse {
+        // 获取数据库中的最早和最晚日期
+        val startDate = "2000-01-01"  // 足够早的日期
+        val endDate = "2099-12-31"    // 足够晚的日期
+
+        val incomeDirections = if (category == "ordinary") listOf("income") else listOf("redeem")
+        val expenseDirections = if (category == "ordinary") listOf("expense") else listOf("buy")
+
+        val data = statementTransactionRepository.getTrendData(
+            format = "%Y",
+            category = category,
+            incomeDirections = incomeDirections,
+            expenseDirections = expenseDirections,
+            startDate = startDate,
+            endDate = endDate,
+            accountNames = accountNames
+        ).map {
+            TrendDataPoint(
+                period = it[0] as String,
+                income = BigDecimal(it[1].toString()),
+                expense = BigDecimal(it[2].toString()),
+                balance = BigDecimal(it[3].toString())
+            )
+        }
+
+        return TrendResponse(category = category, data = data)
+    }
+
+    fun updateTransactionSummary(userId: Long, transactionId: Long, newSummary: String): StatementTransactionResponse {
+        val transaction = statementTransactionRepository.findById(transactionId)
+            .orElseThrow { ResourceNotFoundException("交易记录不存在") }
+
+        if (transaction.userId != userId) {
+            throw ForbiddenException("无权限修改此交易记录")
+        }
+
+        transaction.txnTypeRaw = newSummary
+        val saved = statementTransactionRepository.save(transaction)
+        return StatementTransactionResponse.from(saved)
+    }
+
+    fun getAccountNames(userId: Long): List<String> {
+        return statementTransactionRepository.findAll()
+            .filter { it.userId == userId && !it.accountName.isNullOrBlank() }
+            .map { it.accountName!! }
+            .distinct()
+            .sorted()
+    }
+
+    // 获取导入规则
+    fun getRules(userId: Long): ImportRulesResponse {
+        val setting = settingService.getByKey("household_bills.invest_category")
+        if (setting == null) {
+            return ImportRulesResponse(
+                summaryKeywords = emptyList(),
+                counterpartyKeywords = emptyList(),
+                replaceRules = emptyList()
+            )
+        }
+
+        return try {
+            val config = objectMapper.readValue(setting.value, Map::class.java) as Map<*, *>
+            ImportRulesResponse(
+                summaryKeywords = (config["billing_summary_keyword"] as? List<*>)?.mapNotNull { it as? String } ?: emptyList(),
+                counterpartyKeywords = (config["counter_party_keyword"] as? List<*>)?.mapNotNull { it as? String } ?: emptyList(),
+                replaceRules = (config["replace_rules"] as? List<*>)?.mapNotNull { rule ->
+                    (rule as? Map<*, *>)?.let {
+                        ReplaceRule(
+                            pattern = it["pattern"] as? String ?: "",
+                            replacement = it["replacement"] as? String ?: "",
+                            matchType = it["matchType"] as? String ?: "summary",
+                            counterpartyPattern = it["counterpartyPattern"] as? String
+                        )
+                    }
+                } ?: emptyList()
+            )
+        } catch (e: Exception) {
+            ImportRulesResponse(
+                summaryKeywords = emptyList(),
+                counterpartyKeywords = emptyList(),
+                replaceRules = emptyList()
+            )
+        }
+    }
+
+    // 保存导入规则
+    fun saveRules(userId: Long, request: ImportRulesRequest): ImportRulesResponse {
+        val config = mapOf(
+            "billing_summary_keyword" to request.summaryKeywords,
+            "counter_party_keyword" to request.counterpartyKeywords,
+            "replace_rules" to request.replaceRules.map {
+                val ruleMap = mutableMapOf(
+                    "pattern" to it.pattern,
+                    "replacement" to it.replacement,
+                    "matchType" to it.matchType
+                )
+                if (it.counterpartyPattern != null) {
+                    ruleMap["counterpartyPattern"] = it.counterpartyPattern
+                }
+                ruleMap
+            }
+        )
+        val jsonValue = objectMapper.writeValueAsString(config)
+
+        val existing = settingService.getByKey("household_bills.invest_category")
+        if (existing != null) {
+            settingService.update(existing.id!!, SettingRequest(
+                key = "household_bills.invest_category",
+                value = jsonValue,
+                description = "家庭账单投资分类规则"
+            ))
+        } else {
+            settingService.create(SettingRequest(
+                key = "household_bills.invest_category",
+                value = jsonValue,
+                description = "家庭账单投资分类规则"
+            ))
+        }
+
+        return request.let {
+            ImportRulesResponse(
+                summaryKeywords = it.summaryKeywords,
+                counterpartyKeywords = it.counterpartyKeywords,
+                replaceRules = it.replaceRules
+            )
+        }
+    }
+
+    // 预览规则重跑
+    fun previewRerun(userId: Long): List<RerunChangeResponse> {
+        val rules = getRules(userId)
+        val transactions = statementTransactionRepository.findAll().filter { it.userId == userId }
+        val changes = mutableListOf<RerunChangeResponse>()
+
+        transactions.forEach { txn ->
+            var categoryChanged = false
+            var oldCategory: String? = null
+            var newCategory: String? = null
+            var summaryChanged = false
+            var oldSummary: String? = null
+            var newSummary: String? = null
+
+            // 检查分类是否需要变更
+            val summaryLower = (txn.txnTypeRawOriginal ?: txn.txnTypeRaw ?: "").lowercase()
+            val counterLower = (txn.counterparty ?: "").lowercase()
+
+            val shouldBeInvestment = rules.summaryKeywords.any { summaryLower.contains(it.lowercase()) } ||
+                                    rules.counterpartyKeywords.any { counterLower.contains(it.lowercase()) }
+
+            val currentIsInvestment = txn.category == TransactionCategory.investment
+
+            if (shouldBeInvestment != currentIsInvestment) {
+                categoryChanged = true
+                oldCategory = if (currentIsInvestment) "投资" else "普通"
+                newCategory = if (shouldBeInvestment) "投资" else "普通"
+            }
+
+            // 检查摘要是否需要替换 - 匹配到第一条规则后停止
+            val originalSummary = txn.txnTypeRawOriginal ?: txn.txnTypeRaw ?: ""
+            val counterparty = txn.counterparty ?: ""
+
+            for (rule in rules.replaceRules) {
+                val shouldReplace = when (rule.matchType) {
+                    "counterparty" -> counterparty.contains(rule.pattern, ignoreCase = true)
+                    "both" -> {
+                        val summaryMatch = originalSummary.contains(rule.pattern, ignoreCase = true)
+                        val counterpartyMatch = rule.counterpartyPattern?.let {
+                            counterparty.contains(it, ignoreCase = true)
+                        } ?: false
+                        summaryMatch && counterpartyMatch
+                    }
+                    else -> originalSummary.contains(rule.pattern, ignoreCase = true)
+                }
+
+                if (shouldReplace && txn.txnTypeRaw != rule.replacement) {
+                    summaryChanged = true
+                    oldSummary = txn.txnTypeRaw
+                    newSummary = rule.replacement
+                    break // 匹配到第一条规则后立即退出
+                }
+            }
+
+            if (categoryChanged || summaryChanged) {
+                changes.add(RerunChangeResponse(
+                    id = txn.id!!,
+                    txnDate = txn.txnDate.toString(),
+                    amount = txn.amount.toString(),
+                    counterparty = txn.counterparty,
+                    originalSummary = originalSummary,
+                    currentSummary = txn.txnTypeRaw ?: "",
+                    categoryChange = categoryChanged,
+                    oldCategory = oldCategory,
+                    newCategory = newCategory,
+                    summaryChange = summaryChanged,
+                    oldSummary = oldSummary,
+                    newSummary = newSummary
+                ))
+            }
+        }
+
+        return changes
+    }
+
+    // 执行规则重跑
+    @Transactional
+    fun executeRerun(userId: Long, changeIds: List<Long>): Int {
+        val rules = getRules(userId)
+        val transactions = statementTransactionRepository.findAllById(changeIds)
+            .filter { it.userId == userId }
+
+        transactions.forEach { txn ->
+            // 重新分类
+            val summaryLower = (txn.txnTypeRawOriginal ?: txn.txnTypeRaw ?: "").lowercase()
+            val counterLower = (txn.counterparty ?: "").lowercase()
+
+            val shouldBeInvestment = rules.summaryKeywords.any { summaryLower.contains(it.lowercase()) } ||
+                                    rules.counterpartyKeywords.any { counterLower.contains(it.lowercase()) }
+
+            if (shouldBeInvestment) {
+                txn.category = TransactionCategory.investment
+                txn.direction = if (txn.amount < BigDecimal.ZERO) TransactionDirection.buy else TransactionDirection.redeem
+            } else {
+                txn.category = TransactionCategory.ordinary
+                txn.direction = if (txn.amount < BigDecimal.ZERO) TransactionDirection.expense else TransactionDirection.income
+            }
+
+            // 替换摘要 - 匹配到第一条规则后停止
+            val originalSummary = txn.txnTypeRawOriginal ?: txn.txnTypeRaw ?: ""
+            val counterparty = txn.counterparty ?: ""
+
+            for (rule in rules.replaceRules) {
+                val shouldReplace = when (rule.matchType) {
+                    "counterparty" -> counterparty.contains(rule.pattern, ignoreCase = true)
+                    "both" -> {
+                        val summaryMatch = originalSummary.contains(rule.pattern, ignoreCase = true)
+                        val counterpartyMatch = rule.counterpartyPattern?.let {
+                            counterparty.contains(it, ignoreCase = true)
+                        } ?: false
+                        summaryMatch && counterpartyMatch
+                    }
+                    else -> originalSummary.contains(rule.pattern, ignoreCase = true)
+                }
+
+                if (shouldReplace) {
+                    txn.txnTypeRaw = rule.replacement
+                    break // 匹配到第一条规则后立即退出
+                }
+            }
+        }
+
+        statementTransactionRepository.saveAll(transactions)
+        return transactions.size
     }
 }

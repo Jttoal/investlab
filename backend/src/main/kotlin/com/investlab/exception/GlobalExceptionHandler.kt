@@ -52,6 +52,19 @@ class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error)
     }
     
+    @ExceptionHandler(ForbiddenException::class)
+    fun handleForbiddenException(ex: ForbiddenException): ResponseEntity<ErrorResponse> {
+        val traceId = UUID.randomUUID().toString()
+        logger.error("Forbidden exception - traceId: $traceId", ex)
+        
+        val error = ErrorResponse(
+            code = "FORBIDDEN",
+            message = ex.message ?: "无权限访问",
+            traceId = traceId
+        )
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(error)
+    }
+    
     @ExceptionHandler(Exception::class)
     fun handleGenericException(ex: Exception): ResponseEntity<ErrorResponse> {
         val traceId = UUID.randomUUID().toString()

@@ -5,3 +5,5 @@ class ResourceNotFoundException(message: String) : RuntimeException(message)
 class BusinessException(message: String) : RuntimeException(message)
 
 class ValidationException(message: String) : RuntimeException(message)
+
+class ForbiddenException(message: String) : RuntimeException(message)

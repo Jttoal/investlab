@@ -201,6 +201,61 @@
         </div>
         <div v-else class="empty-state">暂无观点记录</div>
       </div>
+      
+      <!-- 配置 -->
+      <div v-show="activeTab === 'config'" class="card">
+        <div class="card-header">
+          <h2 class="card__title">策略配置</h2>
+        </div>
+        
+        <div class="config-section">
+          <h3 class="config-section__title">均线设置</h3>
+          <p class="config-section__desc">设置该策略的默认均线参数，标的可单独覆盖</p>
+          
+          <div class="config-form">
+            <div class="form-row">
+              <label class="form-label">均线1 (天数)</label>
+              <input 
+                type="number" 
+                v-model.number="strategyConfig.maConfig.ma1" 
+                class="form-input"
+                min="1"
+              />
+            </div>
+            <div class="form-row">
+              <label class="form-label">均线2 (天数)</label>
+              <input 
+                type="number" 
+                v-model.number="strategyConfig.maConfig.ma2" 
+                class="form-input"
+                min="1"
+              />
+            </div>
+            <div class="form-row">
+              <label class="form-label">均线3 (天数)</label>
+              <input 
+                type="number" 
+                v-model.number="strategyConfig.maConfig.ma3" 
+                class="form-input"
+                min="1"
+              />
+            </div>
+            <div class="form-row">
+              <label class="form-label">均线4 (天数)</label>
+              <input 
+                type="number" 
+                v-model.number="strategyConfig.maConfig.ma4" 
+                class="form-input"
+                min="1"
+              />
+            </div>
+          </div>
+          
+          <button class="btn btn--primary" @click="saveStrategyConfig" :disabled="savingConfig">
+            {{ savingConfig ? '保存中...' : '保存配置' }}
+          </button>
+        </div>
+      </div>
     </div>
 
     <!-- 标的模态框 -->
@@ -244,6 +299,7 @@ import TradeModal from '../components/TradeModal.vue'
 import ViewpointModal from '../components/ViewpointModal.vue'
 import * as tradeApi from '../api/trade'
 import * as viewpointApi from '../api/viewpoint'
+import * as strategyApi from '../api/strategy'
 
 const route = useRoute()
 const router = useRouter()
@@ -259,20 +315,55 @@ const editingAsset = ref(null)
 const editingTrade = ref(null)
 const editingViewpoint = ref(null)
 const hoverNoteId = ref(null)
+const strategyConfig = ref({
+  maConfig: {
+    ma1: 51,
+    ma2: 120,
+    ma3: 250,
+    ma4: 850
+  }
+})
+const savingConfig = ref(false)
 
 const tabs = [
   { key: 'assets', label: '持仓标的' },
   { key: 'trades', label: '交易记录' },
-  { key: 'viewpoints', label: '大V观点' }
+  { key: 'viewpoints', label: '大V观点' },
+  { key: 'config', label: '配置' }
 ]
 
 onMounted(() => {
   syncTabFromRoute()
   loadDetail()
+  loadStrategyConfig()
 })
 
 function loadDetail() {
   dashboardStore.fetchStrategyDetail(strategyId.value)
+}
+
+async function loadStrategyConfig() {
+  try {
+    const config = await strategyApi.getStrategyConfig(strategyId.value)
+    if (config.maConfig) {
+      strategyConfig.value = config
+    }
+  } catch (error) {
+    console.error('加载策略配置失败:', error)
+  }
+}
+
+async function saveStrategyConfig() {
+  try {
+    savingConfig.value = true
+    await strategyApi.updateStrategyConfig(strategyId.value, strategyConfig.value)
+    alert('配置保存成功')
+  } catch (error) {
+    console.error('保存策略配置失败:', error)
+    alert('配置保存失败: ' + (error.message || '未知错误'))
+  } finally {
+    savingConfig.value = false
+  }
 }
 
 function goBack() {
@@ -283,6 +374,7 @@ function syncTabFromRoute() {
   const path = route.path
   if (path.endsWith('/trade')) activeTab.value = 'trades'
   else if (path.endsWith('/viewpoints')) activeTab.value = 'viewpoints'
+  else if (path.endsWith('/config')) activeTab.value = 'config'
   else activeTab.value = 'assets'
 }
 
@@ -294,7 +386,9 @@ watch(
 function switchTab(key) {
   activeTab.value = key
   const base = `/strategies/${strategyId.value}`
-  const suffix = key === 'trades' ? '/trade' : key === 'viewpoints' ? '/viewpoints' : '/assets'
+  const suffix = key === 'trades' ? '/trade' : 
+                 key === 'viewpoints' ? '/viewpoints' : 
+                 key === 'config' ? '/config' : '/assets'
   router.replace(base + suffix)
 }
 
@@ -608,5 +702,51 @@ function closeViewpointModal() {
   overflow: auto;
   margin-top: 4px;
   border-radius: 4px;
+}
+
+.config-section {
+  padding: 1rem 0;
+}
+
+.config-section__title {
+  margin: 0 0 0.5rem 0;
+  font-size: 1.125rem;
+  color: #2c3e50;
+}
+
+.config-section__desc {
+  margin: 0 0 1rem 0;
+  color: #6c757d;
+  font-size: 0.875rem;
+}
+
+.config-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.form-row {
+  display: flex;
+  flex-direction: column;
+}
+
+.form-label {
+  margin-bottom: 0.5rem;
+  font-weight: 500;
+  color: #2c3e50;
+}
+
+.form-input {
+  padding: 0.5rem;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 1rem;
+}
+
+.form-input:focus {
+  outline: none;
+  border-color: #42b983;
 }
 </style>

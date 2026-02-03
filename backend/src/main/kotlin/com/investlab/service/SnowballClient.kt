@@ -100,10 +100,10 @@ class SnowballClient(
                 variance.sqrt()
             }
             p.copy(
-                ma51 = ma(51, idx),
-                ma120 = ma(120, idx),
-                ma250 = ma(250, idx),
-                ma850 = ma(850, idx),
+                ma1 = ma(51, idx),
+                ma2 = ma(120, idx),
+                ma3 = ma(250, idx),
+                ma4 = ma(850, idx),
                 bollMid = ma20,
                 bollUpper = if (ma20 != null && std != null) ma20 + k * std else null,
                 bollLower = if (ma20 != null && std != null) ma20 - k * std else null

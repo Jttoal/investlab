@@ -52,4 +52,17 @@ class StrategyController(
     fun searchStrategies(@RequestParam name: String): ResponseEntity<List<StrategyResponse>> {
         return ResponseEntity.ok(strategyService.searchStrategies(name))
     }
+    
+    @GetMapping("/{id}/config")
+    fun getStrategyConfig(@PathVariable id: Long): ResponseEntity<Map<String, Any>> {
+        return ResponseEntity.ok(strategyService.getStrategyConfig(id))
+    }
+    
+    @PutMapping("/{id}/config")
+    fun updateStrategyConfig(
+        @PathVariable id: Long,
+        @RequestBody config: Map<String, Any>
+    ): ResponseEntity<Map<String, Any>> {
+        return ResponseEntity.ok(strategyService.updateStrategyConfig(id, config))
+    }
 }

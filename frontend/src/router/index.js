@@ -49,11 +49,6 @@ const routes = [
   {
     path: '/household-bills',
     name: 'HouseholdBills',
-    component: () => import('../views/HouseholdBillTransactions.vue')
-  },
-  {
-    path: '/household-bills/summary',
-    name: 'HouseholdBillSummary',
     component: () => import('../views/HouseholdBillSummary.vue')
   }
 ]

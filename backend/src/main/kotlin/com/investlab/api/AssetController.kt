@@ -89,4 +89,17 @@ class AssetController(
     fun searchAssets(@RequestParam symbol: String): ResponseEntity<List<AssetResponse>> {
         return ResponseEntity.ok(assetService.getAssetsBySymbol(symbol))
     }
+    
+    @GetMapping("/{id}/config")
+    fun getAssetConfig(@PathVariable id: Long): ResponseEntity<Map<String, Any>> {
+        return ResponseEntity.ok(assetService.getAssetConfig(id))
+    }
+    
+    @PutMapping("/{id}/config")
+    fun updateAssetConfig(
+        @PathVariable id: Long,
+        @RequestBody config: Map<String, Any>
+    ): ResponseEntity<Map<String, Any>> {
+        return ResponseEntity.ok(assetService.updateAssetConfig(id, config))
+    }
 }

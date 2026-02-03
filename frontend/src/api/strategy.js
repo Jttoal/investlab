@@ -23,3 +23,11 @@ export function deleteStrategy(id) {
 export function searchStrategies(name) {
   return http.get('/api/v1/strategies/search', { params: { name } })
 }
+
+export function getStrategyConfig(id) {
+  return http.get(`/api/v1/strategies/${id}/config`)
+}
+
+export function updateStrategyConfig(id, config) {
+  return http.put(`/api/v1/strategies/${id}/config`, config)
+}
