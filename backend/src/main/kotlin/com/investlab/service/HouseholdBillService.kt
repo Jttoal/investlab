@@ -738,9 +738,9 @@ class HouseholdBillService(
             // 检查摘要是否需要替换 - 匹配到第一条规则后停止
             val originalSummary = txn.txnTypeRawOriginal ?: txn.txnTypeRaw ?: ""
             val counterparty = txn.counterparty ?: ""
-
+            var matchedRule: ReplaceRule? = null;
             for (rule in rules.replaceRules) {
-                val shouldReplace = when (rule.matchType) {
+                val ruleMatched = when (rule.matchType) {
                     "counterparty" -> counterparty.contains(rule.pattern, ignoreCase = true)
                     "both" -> {
                         val summaryMatch = originalSummary.contains(rule.pattern, ignoreCase = true)
@@ -752,14 +752,16 @@ class HouseholdBillService(
                     else -> originalSummary.contains(rule.pattern, ignoreCase = true)
                 }
 
-                if (shouldReplace && txn.txnTypeRaw != rule.replacement) {
-                    summaryChanged = true
-                    oldSummary = txn.txnTypeRaw
-                    newSummary = rule.replacement
+                if (ruleMatched ) {
+                    matchedRule = rule;
                     break // 匹配到第一条规则后立即退出
                 }
             }
-
+            if (txn.txnTypeRaw != matchedRule?.replacement) {
+                summaryChanged = true
+                oldSummary = txn.txnTypeRaw
+                newSummary = matchedRule?.replacement
+            }
             if (categoryChanged || summaryChanged) {
                 changes.add(RerunChangeResponse(
                     id = txn.id!!,
@@ -809,7 +811,7 @@ class HouseholdBillService(
             val counterparty = txn.counterparty ?: ""
 
             for (rule in rules.replaceRules) {
-                val shouldReplace = when (rule.matchType) {
+                val ruleMatched = when (rule.matchType) {
                     "counterparty" -> counterparty.contains(rule.pattern, ignoreCase = true)
                     "both" -> {
                         val summaryMatch = originalSummary.contains(rule.pattern, ignoreCase = true)
@@ -821,7 +823,7 @@ class HouseholdBillService(
                     else -> originalSummary.contains(rule.pattern, ignoreCase = true)
                 }
 
-                if (shouldReplace) {
+                if (ruleMatched) {
                     txn.txnTypeRaw = rule.replacement
                     break // 匹配到第一条规则后立即退出
                 }
